@@ -1,0 +1,11 @@
+{
+	"hooks": {
+		"SubagentStop": [
+			// サブエージェント終了時に結果サマリーをログ
+			{
+				"type": "command",
+				"command": "echo \"[$(date)] Subagent completed\" >> .github/hooks/agent.log"
+			}
+		]
+	}
+}

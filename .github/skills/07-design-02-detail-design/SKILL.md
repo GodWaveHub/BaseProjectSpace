@@ -1,6 +1,6 @@
 ---
 name: 07-design-02-detail-design
-description: Instructions for creating detail design documents.
+description: 詳細設計書を作成するためのスキルです。システム全体の構成図、機能・モジュール構成、画面設計、バッチ処理設計、業務ロジック・処理フロー詳細、プログラムファイルの詳細、設定ファイルの詳細をHTML形式で記載します。
 ---
 
 ## フォルダ構成（必須）

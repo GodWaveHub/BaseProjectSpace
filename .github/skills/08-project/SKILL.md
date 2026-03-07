@@ -1,6 +1,6 @@
 ---
 name: 08-project
-description: Instructions for implementation.
+description: 開発プロジェクトを作成・実装する。
 ---
 
 # 実装ルール

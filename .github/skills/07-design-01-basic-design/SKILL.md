@@ -1,6 +1,6 @@
 ---
 name: 07-design-01-basic-design
-description: Instructions for creating basic design documents.
+description: 基本設計書を作成する。
 ---
 
 ## フォルダ構成（必須）

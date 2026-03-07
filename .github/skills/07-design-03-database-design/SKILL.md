@@ -1,6 +1,6 @@
 ---
 name: 07-design-03-database-design
-description: Instructions for creating file and table design documents (File/Table Design).
+description: ファイル・テーブル設計書の作成（ファイル・テーブル設計）
 ---
 
 # ファイル・テーブル設計書作成時の指示
