@@ -1,10 +1,46 @@
 {
 	"hooks": {
+		"PreToolUse": [
+			{
+				"matcher": "Agent",
+				"hooks": [
+					{
+						"type": "command",
+						"command": "pwsh -NoProfile -File ./SCRIPTS/log-subagent-hook.ps1"
+					}
+				]
+			}
+		],
+		"PostToolUse": [
+			{
+				"matcher": "Agent",
+				"hooks": [
+					{
+						"type": "command",
+						"command": "pwsh -NoProfile -File ./SCRIPTS/log-subagent-hook.ps1"
+					}
+				]
+			}
+		],
+		"SubagentStart": [
+			{
+				"hooks": [
+					{
+						"type": "command",
+						"command": "pwsh -NoProfile -File ./SCRIPTS/log-subagent-hook.ps1"
+					}
+				]
+			}
+		],
 		"SubagentStop": [
 			// サブエージェント終了時に結果サマリーをログ
 			{
-				"type": "command",
-				"command": "echo \"[$(date)] Subagent completed\" >> .github/hooks/agent.log"
+				"hooks": [
+					{
+						"type": "command",
+						"command": "pwsh -NoProfile -File ./SCRIPTS/log-subagent-hook.ps1"
+					}
+				]
 			}
 		]
 	}

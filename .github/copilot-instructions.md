@@ -49,11 +49,14 @@ BaseProjectSpace/
 │   ├── 01_BasicDesign/     # 基本設計
 │   ├── 02_DetailDesign/    # 詳細設計
 │   └── 03_DatabaseDesign/  # データベース設計
+│   └── 04_FileDesign/  # ファイル設計
+│   └── 05_APIDesign/  # API設計
 ├── 08_Project/         # 実装（ソースコード）
 ├── 09_Test/            # テスト
 │   ├── 01_UnitTest/        # 単体テスト
-│   ├── 02_IntegrationTest/ # 結合テスト
+│   ├── 02_IntegrationTest/ # 組み合わせテスト
 │   └── 03_SystemTest/      # システムテスト
+├── SCRIPTS/            # スクリプト
 └── 90_prompts/         # AIへの指示・実行ログ
 ```
 
@@ -70,7 +73,10 @@ BaseProjectSpace/
 | 07_Design | 設計書の管理（基本・詳細・DB） | 設計書、ER図、API仕様書 |
 | 08_Project | ソースコード・設定ファイル | プログラムコード、テストコード |
 | 09_Test | テスト計画・実施・結果管理 | テスト仕様書、テストケース、結果報告 |
+| SCRIPTS | スクリプト | PowerShellスクリプト等 |
 | 90_prompts | AIへの指示内容と実行ログ | Markdownファイル（日時＋概要） |
+
+> **注意**: テンプレート・フォーマットは各スキルの `assets/` フォルダに格納されています（`.github/skills/*/assets/`）。
 
 ## 禁止事項
 - 著作権侵害となるコードや説明の出力は禁止

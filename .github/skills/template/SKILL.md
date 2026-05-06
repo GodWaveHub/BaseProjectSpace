@@ -1,5 +1,5 @@
 ---
-name: スキルの名前（親ディレクトリ名と一致必須）
+name: template
 description: スキルが何をするか＋いつ使用するかの説明（例：営業データから週次報告書を自動生成し、前期比較とグラフを含むExcelファイルを作成します）
 allowed-tools:
   - bash
