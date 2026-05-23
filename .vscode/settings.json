@@ -1,7 +1,4 @@
 {
-    "editor.fontSize": 14,
-    "markdown.styles": [
-        ".vscode/markdown.css"
-    ],
-    }
-    
+  "editor.fontSize": 14,
+  "markdown.styles": [".vscode/markdown.css"],
+}

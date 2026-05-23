@@ -141,23 +141,24 @@ copilot help permissions
 ## 利用できるモデル一覧
 
 `copilot help config`で確認できる
-`model`: AI model to use for Copilot CLI; can be changed with /model command or --model flag option.
-\- "claude-sonnet-4.6"
-\- "claude-sonnet-4.5"
-\- "claude-haiku-4.5"
-\- "claude-opus-4.6"
-\- "claude-opus-4.6-fast"
-\- "claude-opus-4.5"
-\- "claude-sonnet-4"
-\- "gpt-5.4"
-\- "gpt-5.3-codex"
-\- "gpt-5.2-codex"
-\- "gpt-5.2"
-\- "gpt-5.1"
-\- "gpt-5.4-mini"
-\- "gpt-5-mini"
-\- "gpt-4.1"
-
+```
+  `model`: AI model to use for Copilot CLI; can be changed with /model command or --model flag option.
+    - "claude-sonnet-4.6"
+    - "claude-sonnet-4.5"
+    - "claude-haiku-4.5"
+    - "claude-opus-4.7"
+    - "claude-opus-4.6"
+    - "claude-opus-4.6-fast"
+    - "claude-opus-4.5"
+    - "gpt-5.5"
+    - "gpt-5.4"
+    - "gpt-5.3-codex"
+    - "gpt-5.2-codex"
+    - "gpt-5.2"
+    - "gpt-5.4-mini"
+    - "gpt-5-mini"
+    - "gpt-4.1"
+```
 # GitHub Copilot の他知識集
 
 ## 対話型実施時の知識
