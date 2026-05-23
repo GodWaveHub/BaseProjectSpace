@@ -1,0 +1,39 @@
+name: Export Issues
+
+on:
+  workflow_dispatch:
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install GitHub CLI
+        uses: cli/cli@v3
+
+      - name: Export issues as JSON
+        run: |
+          gh issue list \
+            --state all \
+            --limit 1000 \
+            --json number,title,body,state,createdAt,updatedAt \
+            > issues.json
+
+      - name: Convert JSON to CSV
+        run: |
+          jq -r '
+            ["number","title","state","createdAt","updatedAt"],
+            (.[] | [.number, .title, .state, .createdAt, .updatedAt])
+            | @csv
+          ' issues.json > issues.csv
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: issues-export
+          path: |
+            issues.json
+            issues.csv
