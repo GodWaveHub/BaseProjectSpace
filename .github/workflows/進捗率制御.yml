@@ -1,0 +1,175 @@
+name: 進捗率制御
+
+on:
+  issues:
+    types: [opened, edited]
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  initialize-progress:
+    # issue作成時に進捗率[%]を0で初期化
+    if: github.event.action == 'opened'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 進捗率を0で初期化
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const issue = context.payload.issue;
+            const body = issue.body || '';
+            const progressLine = '進捗率[%]: 0';
+
+            // 既に進捗率の行がある場合はスキップ
+            if (body.includes('進捗率[%]:')) {
+              console.log('進捗率[%] は既に設定されています');
+              return;
+            }
+
+            // issue bodyに進捗率を追加
+            const newBody = body ? `${body}\n\n${progressLine}` : progressLine;
+
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              body: newBody
+            });
+            console.log(`Issue #${issue.number} の進捗率[%]を0で初期化しました`);
+
+  update-parent-progress:
+    # issue編集時に親の進捗率[%]を再計算
+    if: github.event.action == 'edited'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 親の進捗率を再計算
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            // issueのbodyから進捗率[%]の値を取得する関数
+            function getProgressRate(body) {
+              if (!body) return null;
+              const match = body.match(/進捗率\[%\]:\s*(\d+(?:\.\d+)?)/);
+              return match ? parseFloat(match[1]) : null;
+            }
+
+            // issueのbodyの進捗率[%]を更新する関数
+            function updateProgressInBody(body, newRate) {
+              if (!body) return `進捗率[%]: ${newRate}`;
+              if (body.match(/進捗率\[%\]:\s*\d+(?:\.\d+)?/)) {
+                return body.replace(
+                  /進捗率\[%\]:\s*\d+(?:\.\d+)?/,
+                  `進捗率[%]: ${newRate}`
+                );
+              }
+              return `${body}\n\n進捗率[%]: ${newRate}`;
+            }
+
+            // 進捗率の変更があったか確認
+            const issue = context.payload.issue;
+            const currentBody = issue.body || '';
+            const changes = context.payload.changes;
+
+            // bodyの変更がない場合はスキップ
+            if (!changes || !changes.body) {
+              console.log('bodyの変更なし。スキップします。');
+              return;
+            }
+
+            const oldRate = getProgressRate(changes.body.from);
+            const newRate = getProgressRate(currentBody);
+
+            // 進捗率に変更がない場合はスキップ
+            if (oldRate === newRate) {
+              console.log('進捗率[%]の変更なし。スキップします。');
+              return;
+            }
+
+            console.log(`Issue #${issue.number} の進捗率: ${oldRate} → ${newRate}`);
+
+            // 親issueを再帰的に更新する関数
+            async function updateParentProgress(issueNumber) {
+              // 現在のissueの情報を取得して親を特定
+              const issueData = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber
+              });
+
+              // 親issueのURLから番号を取得
+              const parentUrl = issueData.data.parent_issue_url;
+              if (!parentUrl) {
+                console.log(`Issue #${issueNumber} には親issueがありません。再帰終了。`);
+                return;
+              }
+
+              const parentNumber = parseInt(parentUrl.split('/').pop());
+              console.log(`親issue: #${parentNumber}`);
+
+              // 親issueのサブissue一覧を取得
+              const subIssues = await github.rest.issues.listSubIssues({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: parentNumber
+              });
+
+              // 各サブissueの進捗率を収集
+              const rates = [];
+              for (const subIssue of subIssues.data) {
+                const rate = getProgressRate(subIssue.body);
+                if (rate !== null) {
+                  rates.push(rate);
+                  console.log(`  サブissue #${subIssue.number}: 進捗率 ${rate}%`);
+                } else {
+                  // 進捗率が未設定の場合は0とみなす
+                  rates.push(0);
+                  console.log(`  サブissue #${subIssue.number}: 進捗率 未設定(0とみなす)`);
+                }
+              }
+
+              if (rates.length === 0) {
+                console.log('サブissueが見つかりません。スキップします。');
+                return;
+              }
+
+              // 平均値を計算（小数点以下は四捨五入）
+              const average = Math.round(rates.reduce((a, b) => a + b, 0) / rates.length);
+              console.log(`親issue #${parentNumber} の新しい進捗率: ${average}%`);
+
+              // 親issueのbodyを更新
+              const parentIssue = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: parentNumber
+              });
+
+              const parentBody = parentIssue.data.body || '';
+              const currentParentRate = getProgressRate(parentBody);
+
+              // 親の進捗率が同じ値なら更新不要
+              if (currentParentRate === average) {
+                console.log(`親issue #${parentNumber} の進捗率は既に ${average}% です。更新不要。`);
+                return;
+              }
+
+              const newParentBody = updateProgressInBody(parentBody, average);
+
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: parentNumber,
+                body: newParentBody
+              });
+
+              console.log(`親issue #${parentNumber} の進捗率を ${average}% に更新しました`);
+
+              // さらに上位の親を再帰的に更新
+              await updateParentProgress(parentNumber);
+            }
+
+            // 親issueの更新を開始
+            await updateParentProgress(issue.number);
