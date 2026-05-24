@@ -94,33 +94,55 @@ jobs:
 
             // 親issueを再帰的に更新する関数
             async function updateParentProgress(issueNumber) {
-              // 現在のissueの情報を取得して親を特定
-              const issueData = await github.rest.issues.get({
+              // GraphQL で親issueの番号を取得
+              const parentResult = await github.graphql(`
+                query($owner: String!, $repo: String!, $number: Int!) {
+                  repository(owner: $owner, name: $repo) {
+                    issue(number: $number) {
+                      parent {
+                        number
+                      }
+                    }
+                  }
+                }
+              `, {
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: issueNumber
+                number: issueNumber
               });
 
-              // 親issueのURLから番号を取得
-              const parentUrl = issueData.data.parent_issue_url;
-              if (!parentUrl) {
+              const parentNumber = parentResult.repository.issue.parent?.number;
+              if (!parentNumber) {
                 console.log(`Issue #${issueNumber} には親issueがありません。再帰終了。`);
                 return;
               }
-
-              const parentNumber = parseInt(parentUrl.split('/').pop());
               console.log(`親issue: #${parentNumber}`);
 
-              // 親issueのサブissue一覧を取得
-              const subIssues = await github.rest.issues.listSubIssues({
+              // GraphQL で親issueのサブissue一覧を取得
+              const subIssuesResult = await github.graphql(`
+                query($owner: String!, $repo: String!, $number: Int!) {
+                  repository(owner: $owner, name: $repo) {
+                    issue(number: $number) {
+                      subIssues(first: 100) {
+                        nodes {
+                          number
+                          body
+                        }
+                      }
+                    }
+                  }
+                }
+              `, {
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: parentNumber
+                number: parentNumber
               });
+
+              const subIssueNodes = subIssuesResult.repository.issue.subIssues.nodes;
 
               // 各サブissueの進捗率を収集
               const rates = [];
-              for (const subIssue of subIssues.data) {
+              for (const subIssue of subIssueNodes) {
                 const rate = getProgressRate(subIssue.body);
                 if (rate !== null) {
                   rates.push(rate);
@@ -141,7 +163,7 @@ jobs:
               const average = Math.round(rates.reduce((a, b) => a + b, 0) / rates.length);
               console.log(`親issue #${parentNumber} の新しい進捗率: ${average}%`);
 
-              // 親issueのbodyを更新
+              // 親issueのbodyを取得して更新
               const parentIssue = await github.rest.issues.get({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
