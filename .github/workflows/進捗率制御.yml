@@ -83,12 +83,13 @@ jobs:
             const oldRate = getProgressRate(changes.body.from);
             const newRate = getProgressRate(currentBody);
 
-            // 進捗率に変更がない場合はスキップ
-            if (oldRate === newRate) {
+            // 両方とも数値で同じ値の場合のみスキップ（null同士の場合はスキップしない）
+            if (oldRate !== null && newRate !== null && oldRate === newRate) {
               console.log('進捗率[%]の変更なし。スキップします。');
               return;
             }
 
+            // 両方nullの場合でも親の再計算を試みる（初回設定や形式不一致に対応）
             console.log(`Issue #${issue.number} の進捗率: ${oldRate} → ${newRate}`);
 
             // 親issueを再帰的に更新する関数
