@@ -1,8 +1,8 @@
 name: 進捗率制御
 
 on:
-  issues:
-    types: [opened, edited, labeled, unlabeled, closed, reopened]
+  projects_v2_item:
+    types: [created, edited]
 
 permissions:
   issues: write
@@ -10,122 +10,294 @@ permissions:
 
 jobs:
   initialize-progress:
-    # issue作成時に進捗率[%]を0で初期化
-    if: github.event.action == 'opened'
+    # プロジェクトアイテム作成時に進捗率[%]を0で初期化
+    if: github.event.action == 'created'
     runs-on: ubuntu-latest
     steps:
       - name: 進捗率を0で初期化
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.PAT_TOKEN }}
           script: |
-            const issue = context.payload.issue;
-            const body = issue.body || '';
-            const progressLine = '進捗率[%]: 0';
+            const itemNodeId = context.payload.projects_v2_item.node_id;
+            const projectNodeId = context.payload.projects_v2_item.project_node_id;
 
-            // 既に進捗率の行がある場合はスキップ
-            if (body.includes('進捗率[%]:')) {
-              console.log('進捗率[%] は既に設定されています');
+            // アイテムの詳細とプロジェクトのフィールド情報を取得
+            const itemData = await github.graphql(`
+              query($itemId: ID!) {
+                node(id: $itemId) {
+                  ... on ProjectV2Item {
+                    content {
+                      ... on Issue {
+                        number
+                        title
+                      }
+                    }
+                    fieldValues(first: 20) {
+                      nodes {
+                        ... on ProjectV2ItemFieldNumberValue {
+                          number
+                          field {
+                            ... on ProjectV2FieldCommon {
+                              name
+                              id
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            `, { itemId: itemNodeId });
+
+            const item = itemData.node;
+            if (!item || !item.content) {
+              console.log('Issue以外のアイテムのため、スキップします。');
               return;
             }
 
-            // issue bodyに進捗率を追加
-            const newBody = body ? `${body}\n\n${progressLine}` : progressLine;
+            // 「進捗率[%]」フィールドの現在値を確認
+            let progressFieldId = null;
+            let currentProgress = null;
+            for (const fv of item.fieldValues.nodes) {
+              if (fv.field && fv.field.name === '進捗率[%]') {
+                progressFieldId = fv.field.id;
+                currentProgress = fv.number;
+                break;
+              }
+            }
 
-            await github.rest.issues.update({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issue.number,
-              body: newBody
+            if (currentProgress !== null && currentProgress !== undefined) {
+              console.log(`進捗率[%] は既に ${currentProgress}% に設定されています。スキップします。`);
+              return;
+            }
+
+            // フィールドIDがまだ取れていない場合はプロジェクトから検索
+            if (!progressFieldId) {
+              const projectData = await github.graphql(`
+                query($projectId: ID!) {
+                  node(id: $projectId) {
+                    ... on ProjectV2 {
+                      fields(first: 50) {
+                        nodes {
+                          ... on ProjectV2Field {
+                            id
+                            name
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              `, { projectId: projectNodeId });
+
+              for (const field of projectData.node.fields.nodes) {
+                if (field.name === '進捗率[%]') {
+                  progressFieldId = field.id;
+                  break;
+                }
+              }
+            }
+
+            if (!progressFieldId) {
+              console.log('「進捗率[%]」フィールドがプロジェクトに見つかりません。スキップします。');
+              return;
+            }
+
+            // 進捗率[%]を0で初期化
+            await github.graphql(`
+              mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: Float!) {
+                updateProjectV2ItemFieldValue(input: {
+                  projectId: $projectId
+                  itemId: $itemId
+                  fieldId: $fieldId
+                  value: { number: $value }
+                }) {
+                  projectV2Item {
+                    id
+                  }
+                }
+              }
+            `, {
+              projectId: projectNodeId,
+              itemId: itemNodeId,
+              fieldId: progressFieldId,
+              value: 0
             });
-            console.log(`Issue #${issue.number} の進捗率[%]を0で初期化しました`);
+
+            console.log(`Issue #${item.content.number} の進捗率[%]を0で初期化しました`);
 
   update-parent-progress:
-    # issue編集時に親の進捗率[%]を再計算
-    if: github.event.action != 'opened'
+    # 進捗率[%]フィールド編集時に親の進捗率[%]を再計算
+    if: github.event.action == 'edited'
     runs-on: ubuntu-latest
     steps:
       - name: 親の進捗率を再計算
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.PAT_TOKEN }}
           script: |
-            // issueのbodyから進捗率[%]の値を取得する関数
-            function getProgressRate(body) {
-              if (!body) return null;
-              const match = body.match(/進捗率\[%\]:\s*(\d+(?:\.\d+)?)/);
-              return match ? parseFloat(match[1]) : null;
+            const payload = context.payload;
+            const changes = payload.changes;
+
+            // 変更されたフィールドが「進捗率[%]」か確認
+            // field_value変更の場合 changes.field_value.field_node_id で特定
+            if (!changes || !changes.field_value) {
+              console.log('フィールド値の変更ではありません。スキップします。');
+              return;
             }
 
-            // issueのbodyの進捗率[%]を更新する関数
-            function updateProgressInBody(body, newRate) {
-              if (!body) return `進捗率[%]: ${newRate}`;
-              if (body.match(/進捗率\[%\]:\s*\d+(?:\.\d+)?/)) {
-                return body.replace(
-                  /進捗率\[%\]:\s*\d+(?:\.\d+)?/,
-                  `進捗率[%]: ${newRate}`
-                );
+            const itemNodeId = payload.projects_v2_item.node_id;
+            const projectNodeId = payload.projects_v2_item.project_node_id;
+
+            // 変更されたアイテムの詳細取得
+            const itemData = await github.graphql(`
+              query($itemId: ID!) {
+                node(id: $itemId) {
+                  ... on ProjectV2Item {
+                    content {
+                      ... on Issue {
+                        number
+                        title
+                      }
+                    }
+                    fieldValues(first: 20) {
+                      nodes {
+                        ... on ProjectV2ItemFieldNumberValue {
+                          number
+                          field {
+                            ... on ProjectV2FieldCommon {
+                              name
+                              id
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
               }
-              return `${body}\n\n進捗率[%]: ${newRate}`;
+            `, { itemId: itemNodeId });
+
+            const item = itemData.node;
+            if (!item || !item.content) {
+              console.log('Issue以外のアイテムのため、スキップします。');
+              return;
             }
 
-            // 進捗率の変更があったか確認
-            const issue = context.payload.issue;
-            const currentBody = issue.body || '';
-            const changes = context.payload.changes;
-
-            const newRate = getProgressRate(currentBody);
-
-            // bodyの変更がある場合、進捗率が変わっていなければスキップ
-            if (changes && changes.body) {
-              const oldRate = getProgressRate(changes.body.from);
-              if (oldRate === null && newRate === null) {
-                console.log('進捗率[%]が設定されていない編集です。スキップします。');
-                return;
+            // 変更フィールドが「進捗率[%]」か確認
+            let progressFieldId = null;
+            let currentProgress = null;
+            for (const fv of item.fieldValues.nodes) {
+              if (fv.field && fv.field.name === '進捗率[%]') {
+                progressFieldId = fv.field.id;
+                currentProgress = fv.number;
+                break;
               }
-              if (oldRate !== null && newRate !== null && oldRate === newRate) {
-                console.log('進捗率[%]の変更なし。スキップします。');
-                return;
-              }
-              console.log(`Issue #${issue.number} の進捗率: ${oldRate} → ${newRate}`);
-            } else {
-              // bodyの変更がなくても進捗率があれば親の再計算を試みる
-              if (newRate === null) {
-                console.log('進捗率[%]が設定されていません。スキップします。');
-                return;
-              }
-              console.log(`Issue #${issue.number} の進捗率: ${newRate}（body以外の変更による再計算）`);
             }
 
-            // 親issueを再帰的に更新する関数
-            async function updateParentProgress(issueNumber) {
-              // REST API で対象issueのタイムラインイベントから親issueを特定
-              // （Sub-issues progressは使わず、親子関係のみ取得）
+            // 変更対象フィールドが「進捗率[%]」でない場合はスキップ
+            if (!progressFieldId || changes.field_value.field_node_id !== progressFieldId) {
+              // field_node_id が一致しない場合もフィールド名で判定
+              // (変更フィールド情報はchanges.field_value.field_node_idのみ)
+              // 念のためフィールドIDが取れている場合だけ進める
+              if (progressFieldId && changes.field_value.field_node_id !== progressFieldId) {
+                console.log('進捗率[%]以外のフィールド変更です。スキップします。');
+                return;
+              }
+              if (!progressFieldId) {
+                console.log('「進捗率[%]」フィールドが見つかりません。スキップします。');
+                return;
+              }
+            }
+
+            const issueNumber = item.content.number;
+            console.log(`Issue #${issueNumber} の進捗率[%]が ${currentProgress}% に変更されました`);
+
+            // GraphQL: issue番号からプロジェクト内の親子関係を取得しながら進捗を再帰更新
+            // GitHub Sub-issues API (REST timeline) で親issueを特定する
+            async function getProgressFromItem(targetIssueNumber, pNodeId) {
+              // プロジェクト内の全アイテムを検索してissue番号に一致するものを取得
+              let cursor = null;
+              let found = null;
+              do {
+                const result = await github.graphql(`
+                  query($projectId: ID!, $cursor: String) {
+                    node(id: $projectId) {
+                      ... on ProjectV2 {
+                        items(first: 50, after: $cursor) {
+                          pageInfo { hasNextPage endCursor }
+                          nodes {
+                            id
+                            content {
+                              ... on Issue { number }
+                            }
+                            fieldValues(first: 20) {
+                              nodes {
+                                ... on ProjectV2ItemFieldNumberValue {
+                                  number
+                                  field {
+                                    ... on ProjectV2FieldCommon { name id }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                `, { projectId: pNodeId, cursor });
+
+                const pageItems = result.node.items.nodes;
+                for (const pi of pageItems) {
+                  if (pi.content && pi.content.number === targetIssueNumber) {
+                    found = pi;
+                    break;
+                  }
+                }
+                if (found) break;
+                cursor = result.node.items.pageInfo.hasNextPage ? result.node.items.pageInfo.endCursor : null;
+              } while (cursor);
+
+              if (!found) return { itemId: null, rate: null, fieldId: null };
+
+              let rate = null;
+              let fId = null;
+              for (const fv of found.fieldValues.nodes) {
+                if (fv.field && fv.field.name === '進捗率[%]') {
+                  rate = fv.number ?? null;
+                  fId = fv.field.id;
+                  break;
+                }
+              }
+              return { itemId: found.id, rate, fieldId: fId };
+            }
+
+            async function updateParentProgress(targetIssueNumber) {
+              // タイムラインイベントから親issueを特定
               const timelineEvents = await github.paginate(
                 github.rest.issues.listEventsForTimeline,
                 {
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  issue_number: issueNumber,
+                  issue_number: targetIssueNumber,
                   per_page: 100
                 }
               );
 
-              // タイムラインから "added_to_parent" イベントで親issueを特定
               let parentNumber = null;
               for (const event of timelineEvents) {
                 if (event.event === 'added_to_parent' && event.parent) {
                   parentNumber = event.parent.number;
                 } else if (event.event === 'removed_from_parent' && event.parent) {
-                  // 親から外された場合はリセット
-                  if (event.parent.number === parentNumber) {
-                    parentNumber = null;
-                  }
+                  if (event.parent.number === parentNumber) parentNumber = null;
                 }
               }
 
               if (!parentNumber) {
-                console.log(`Issue #${issueNumber} には親issueがありません。再帰終了。`);
+                console.log(`Issue #${targetIssueNumber} には親issueがありません。再帰終了。`);
                 return;
               }
               console.log(`親issue: #${parentNumber}`);
@@ -141,7 +313,6 @@ jobs:
                 }
               );
 
-              // "added_to_sub_issue" イベントから子issue番号を収集
               const childNumbers = new Set();
               for (const event of parentTimeline) {
                 if (event.event === 'added_to_sub_issue' && event.sub_issue) {
@@ -151,23 +322,20 @@ jobs:
                 }
               }
 
-              // 各子issueのbodyをREST APIで個別取得し、進捗率を収集
+              // 各子issueの進捗率[%]をプロジェクトのCustom Fieldから取得
               const rates = [];
+              let sharedFieldId = progressFieldId;
               for (const childNumber of childNumbers) {
-                let childBody;
-                if (childNumber === issue.number) {
-                  // 現在編集中のissueの場合、イベントペイロードの最新bodyを使用
-                  childBody = currentBody;
+                let rate;
+                if (childNumber === issueNumber) {
+                  // 現在編集中のissueは最新値を使用
+                  rate = currentProgress;
                 } else {
-                  const childIssue = await github.rest.issues.get({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    issue_number: childNumber
-                  });
-                  childBody = childIssue.data.body || '';
+                  const result = await getProgressFromItem(childNumber, projectNodeId);
+                  rate = result.rate;
+                  if (!sharedFieldId && result.fieldId) sharedFieldId = result.fieldId;
                 }
-                const rate = getProgressRate(childBody);
-                if (rate !== null) {
+                if (rate !== null && rate !== undefined) {
                   rates.push(rate);
                   console.log(`  子issue #${childNumber}: 進捗率 ${rate}%`);
                 } else {
@@ -184,29 +352,45 @@ jobs:
               const average = Math.round(rates.reduce((a, b) => a + b, 0) / rates.length);
               console.log(`親issue #${parentNumber} の新しい進捗率: ${average}%`);
 
-              // 親issueのbodyを取得して更新
-              const parentIssue = await github.rest.issues.get({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: parentNumber
-              });
+              // 親issueのプロジェクトアイテムを取得
+              const parentResult = await getProgressFromItem(parentNumber, projectNodeId);
 
-              const parentBody = parentIssue.data.body || '';
-              const currentParentRate = getProgressRate(parentBody);
+              if (!parentResult.itemId) {
+                console.log(`親issue #${parentNumber} がプロジェクトに見つかりません。スキップします。`);
+                return;
+              }
 
-              // 親の進捗率が同じ値なら更新不要
+              const currentParentRate = parentResult.rate;
+              const parentItemId = parentResult.itemId;
+              const parentFieldId = parentResult.fieldId || sharedFieldId;
+
               if (currentParentRate === average) {
                 console.log(`親issue #${parentNumber} の進捗率は既に ${average}% です。更新不要。`);
                 return;
               }
 
-              const newParentBody = updateProgressInBody(parentBody, average);
+              if (!parentFieldId) {
+                console.log('「進捗率[%]」フィールドIDが特定できません。スキップします。');
+                return;
+              }
 
-              await github.rest.issues.update({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: parentNumber,
-                body: newParentBody
+              // 親issueのプロジェクトCustom Fieldを更新
+              await github.graphql(`
+                mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: Float!) {
+                  updateProjectV2ItemFieldValue(input: {
+                    projectId: $projectId
+                    itemId: $itemId
+                    fieldId: $fieldId
+                    value: { number: $value }
+                  }) {
+                    projectV2Item { id }
+                  }
+                }
+              `, {
+                projectId: projectNodeId,
+                itemId: parentItemId,
+                fieldId: parentFieldId,
+                value: average
               });
 
               console.log(`親issue #${parentNumber} の進捗率を ${average}% に更新しました`);
@@ -216,4 +400,4 @@ jobs:
             }
 
             // 親issueの更新を開始
-            await updateParentProgress(issue.number);
+            await updateParentProgress(issueNumber);
