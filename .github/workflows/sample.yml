@@ -5,55 +5,218 @@ on:
   issues:
     types: [opened, edited]
 
+permissions:
+  contents: read
+  issues: read
+  repository-projects: write
+
+concurrency:
+  group: auto-display-order
+  cancel-in-progress: false
+
 jobs:
   sort:
     runs-on: ubuntu-latest
 
     steps:
-      # インストールステップを削除し、すぐにスクリプトを実行します
-      - name: Build hierarchical 表示順
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          echo "Fetching all issues..."
-          gh issue list --state all --json number,title,subIssues,parent > all.json
+      - name: Update 表示順 field in Projects
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await (async () => {
+              const owner = context.repo.owner;
+              const repo = context.repo.repo;
+              const fieldName = '表示順';
 
-          # 再帰関数：階層を辿って 表示順 を付与
-          assign_order() {
-            local parent_number=$1
-            local prefix=$2
+              async function fetchAllIssues() {
+                const issues = [];
+                let cursor = null;
 
-            # 子 Issue を取得
-            children=$(jq --arg P "$parent_number" '[.[] | select(.parent.number == ($P|tonumber))]' all.json)
+                while (true) {
+                  const response = await github.graphql(
+                    `
+                      query($owner: String!, $repo: String!, $cursor: String) {
+                        repository(owner: $owner, name: $repo) {
+                          issues(
+                            first: 100
+                            after: $cursor
+                            states: [OPEN, CLOSED]
+                            orderBy: {field: CREATED_AT, direction: ASC}
+                          ) {
+                            nodes {
+                              id
+                              number
+                              title
+                              parent {
+                                number
+                              }
+                              projectItems(first: 20) {
+                                nodes {
+                                  id
+                                  project {
+                                    __typename
+                                    ... on ProjectV2 {
+                                      id
+                                      title
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                            pageInfo {
+                              hasNextPage
+                              endCursor
+                            }
+                          }
+                        }
+                      }
+                    `,
+                    { owner, repo, cursor }
+                  );
 
-            index=1
-            echo "$children" | jq -c '.[]' | while read -r child; do
-              child_num=$(echo "$child" | jq '.number')
-              order="${prefix}.${index}"
+                  const connection = response.repository.issues;
+                  issues.push(...connection.nodes);
 
-              echo "Setting Issue #$child_num 表示順=$order"
-              gh issue edit "$child_num" --add-field "表示順=$order"
+                  if (!connection.pageInfo.hasNextPage) {
+                    return issues;
+                  }
 
-              # 再帰呼び出し（孫・ひ孫…）
-              assign_order "$child_num" "$order"
+                  cursor = connection.pageInfo.endCursor;
+                }
+              }
 
-              index=$((index + 1))
-            done
-          }
+              async function fetchProjectFields() {
+                const response = await github.graphql(
+                  `
+                    query($owner: String!, $repo: String!) {
+                      repository(owner: $owner, name: $repo) {
+                        projectsV2(first: 20) {
+                          nodes {
+                            id
+                            title
+                            fields(first: 50) {
+                              nodes {
+                                ... on ProjectV2FieldCommon {
+                                  id
+                                  name
+                                  dataType
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  `,
+                  { owner, repo }
+                );
 
-          # 親 Issue（最上位）を抽出
-          parents=$(jq '[.[] | select(.parent == null)]' all.json)
+                return response.repository.projectsV2.nodes;
+              }
 
-          pindex=1
-          echo "$parents" | jq -c '.[]' | while read -r parent; do
-            pnum=$(echo "$parent" | jq '.number')
-            porder="$pindex"
+              const issues = await fetchAllIssues();
+              const projects = await fetchProjectFields();
 
-            echo "Setting Parent Issue #$pnum 表示順=$porder"
-            gh issue edit "$pnum" --add-field "表示順=$porder"
+              core.info(`Fetched ${issues.length} issues and ${projects.length} projects.`);
 
-            # 子階層を再帰処理
-            assign_order "$pnum" "$porder"
+              const orderFieldByProjectId = new Map(
+                projects
+                  .map((project) => {
+                    const field = project.fields.nodes.find(
+                      (candidate) => candidate && candidate.name === fieldName && candidate.dataType === 'TEXT'
+                    );
+                    return field ? [project.id, { projectTitle: project.title, fieldId: field.id }] : null;
+                  })
+                  .filter(Boolean)
+              );
 
-            pindex=$((pindex + 1))
-          done
+              if (orderFieldByProjectId.size === 0) {
+                core.warning(`No TEXT field named "${fieldName}" was found in repository projects.`);
+                return;
+              }
+
+              const childrenByParent = new Map();
+              const roots = [];
+
+              for (const issue of issues) {
+                const parentNumber = issue.parent?.number ?? null;
+                if (parentNumber === null) {
+                  roots.push(issue);
+                } else {
+                  const siblings = childrenByParent.get(parentNumber) ?? [];
+                  siblings.push(issue);
+                  childrenByParent.set(parentNumber, siblings);
+                }
+              }
+
+              roots.sort((a, b) => a.number - b.number);
+              for (const siblings of childrenByParent.values()) {
+                siblings.sort((a, b) => a.number - b.number);
+              }
+
+              const orderByIssueNumber = new Map();
+
+              function assignOrders(issueList, prefix = '') {
+                issueList.forEach((issue, index) => {
+                  const order = prefix ? `${prefix}.${index + 1}` : `${index + 1}`;
+                  orderByIssueNumber.set(issue.number, order);
+                  assignOrders(childrenByParent.get(issue.number) ?? [], order);
+                });
+              }
+
+              assignOrders(roots);
+
+              const updateMutation = `
+                mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: String!) {
+                  updateProjectV2ItemFieldValue(
+                    input: {
+                      projectId: $projectId
+                      itemId: $itemId
+                      fieldId: $fieldId
+                      value: { text: $value }
+                    }
+                  ) {
+                    projectV2Item {
+                      id
+                    }
+                  }
+                }
+              `;
+
+              for (const issue of issues) {
+                const order = orderByIssueNumber.get(issue.number);
+                if (!order) {
+                  core.warning(`No order was generated for issue #${issue.number}.`);
+                  continue;
+                }
+
+                let updatedAnyItem = false;
+
+                for (const item of issue.projectItems.nodes) {
+                  if (!item?.project || item.project.__typename !== 'ProjectV2') {
+                    continue;
+                  }
+
+                  const field = orderFieldByProjectId.get(item.project.id);
+                  if (!field) {
+                    continue;
+                  }
+
+                  await github.graphql(updateMutation, {
+                    projectId: item.project.id,
+                    itemId: item.id,
+                    fieldId: field.fieldId,
+                    value: order
+                  });
+
+                  updatedAnyItem = true;
+                  core.info(
+                    `Updated project "${field.projectTitle}" for issue #${issue.number} (${issue.title}) to ${fieldName}=${order}`
+                  );
+                }
+
+                if (!updatedAnyItem) {
+                  core.info(`Skipped issue #${issue.number} because no matching project item was found.`);
+                }
+              }
+            })();
