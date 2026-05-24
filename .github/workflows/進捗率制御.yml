@@ -79,6 +79,10 @@ jobs:
             // bodyの変更がある場合、進捗率が変わっていなければスキップ
             if (changes && changes.body) {
               const oldRate = getProgressRate(changes.body.from);
+              if (oldRate === null && newRate === null) {
+                console.log('進捗率[%]が設定されていない編集です。スキップします。');
+                return;
+              }
               if (oldRate !== null && newRate !== null && oldRate === newRate) {
                 console.log('進捗率[%]の変更なし。スキップします。');
                 return;
@@ -153,9 +157,8 @@ jobs:
                   rates.push(rate);
                   console.log(`  サブissue #${subIssue.number}: 進捗率 ${rate}%`);
                 } else {
-                  // 進捗率が未設定の場合は0とみなす
-                  rates.push(0);
-                  console.log(`  サブissue #${subIssue.number}: 進捗率 未設定(0とみなす)`);
+                  // 進捗率が未設定の場合は計算から除外する
+                  console.log(`  サブissue #${subIssue.number}: 進捗率 未設定(計算から除外)`);
                 }
               }
 
