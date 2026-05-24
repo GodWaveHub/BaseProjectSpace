@@ -1,39 +1,61 @@
-name: Export Issues
+name: Auto 表示順 (Multi-level)
 
 on:
   workflow_dispatch:
+  issues:
+    types: [opened, edited]
 
 jobs:
-  export:
+  sort:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Install GitHub CLI
         uses: cli/cli@v3
 
-      - name: Export issues as JSON
+      - name: Build hierarchical 表示順
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh issue list \
-            --state all \
-            --limit 1000 \
-            --json number,title,body,state,createdAt,updatedAt \
-            > issues.json
+          echo "Fetching all issues..."
+          gh issue list --state all --json number,title,subIssues,parent > all.json
 
-      - name: Convert JSON to CSV
-        run: |
-          jq -r '
-            ["number","title","state","createdAt","updatedAt"],
-            (.[] | [.number, .title, .state, .createdAt, .updatedAt])
-            | @csv
-          ' issues.json > issues.csv
+          # 再帰関数：階層を辿って 表示順 を付与
+          assign_order() {
+            local parent_number=$1
+            local prefix=$2
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: issues-export
-          path: |
-            issues.json
-            issues.csv
+            # 子 Issue を取得
+            children=$(jq --arg P "$parent_number" '[.[] | select(.parent.number == ($P|tonumber))]' all.json)
+
+            index=1
+            echo "$children" | jq -c '.[]' | while read -r child; do
+              child_num=$(echo "$child" | jq '.number')
+              order="${prefix}.${index}"
+
+              echo "Setting Issue #$child_num 表示順=$order"
+              gh issue edit "$child_num" --add-field "表示順=$order"
+
+              # 再帰呼び出し（孫・ひ孫…）
+              assign_order "$child_num" "$order"
+
+              index=$((index + 1))
+            done
+          }
+
+          # 親 Issue（最上位）を抽出
+          parents=$(jq '[.[] | select(.parent == null)]' all.json)
+
+          pindex=1
+          echo "$parents" | jq -c '.[]' | while read -r parent; do
+            pnum=$(echo "$parent" | jq '.number')
+            porder="$pindex"
+
+            echo "Setting Parent Issue #$pnum 表示順=$porder"
+            gh issue edit "$pnum" --add-field "表示順=$porder"
+
+            # 子階層を再帰処理
+            assign_order "$pnum" "$porder"
+
+            pindex=$((pindex + 1))
+          done

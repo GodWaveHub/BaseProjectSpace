@@ -48,6 +48,9 @@
   * （ワークスペース全体を考慮しつつ、`auth.py` の内容を解説して）
 * **例2：** `/fix #terminalLastCommand`
   * （さっきターミナルで出たエラーを直して）
+* **例3：** `/explain #terminalLastCommand`
+  * （さっきターミナルで出て結果を説明して）
+
 
 チャット入力欄で `#` や `/` を入力するだけで、その場で利用可能な候補がプルダウン表示されるので、まずは入力してみるのが一番の近道です。
 
@@ -159,6 +162,48 @@ copilot help permissions
     - "gpt-5-mini"
     - "gpt-4.1"
 ```
+
+# GitHub CLI
+
+## インストール
+
+```powershell
+winget install --id GitHub.cli
+```
+
+## バージョンアップ
+
+```powershell
+gh --version
+winget upgrade --id GitHub.cli
+gh --version
+```
+## 認証設定
+以下で認証設定を行う。
+
+```powershell
+gh auth login
+? Where do you use GitHub? GitHub.com                                                           
+? What is your preferred protocol for Git operations on this host? HTTPS                        
+? Authenticate Git with your GitHub credentials? Yes                                            
+? How would you like to authenticate GitHub CLI? Paste an authentication token                  
+Tip: you can generate a Personal Access Token here https://github.com/settings/tokens           
+The minimum required scopes are 'repo', 'read:org', 'workflow'.                                 
+? Paste your authentication token: ****************************************                     
+- gh config set -h github.com git_protocol https
+✓ Configured git protocol
+✓ Logged in as GodWaveHub
+```
+```powershell
+gh auth status
+github.com
+  ✓ Logged in to github.com account GodWaveHub (keyring)
+  - Active account: true
+  - Git operations protocol: https
+  - Token: ghp_************************************
+  - Token scopes: 'gist', 'read:org', 'repo'
+```
+
 # GitHub Copilot の他知識集
 
 ## 対話型実施時の知識
