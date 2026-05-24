@@ -79,6 +79,10 @@ jobs:
             // bodyの変更がある場合、進捗率が変わっていなければスキップ
             if (changes && changes.body) {
               const oldRate = getProgressRate(changes.body.from);
+              if (oldRate === null && newRate === null) {
+                console.log('進捗率[%]が設定されていない編集です。スキップします。');
+                return;
+              }
               if (oldRate !== null && newRate !== null && oldRate === newRate) {
                 console.log('進捗率[%]の変更なし。スキップします。');
                 return;
@@ -95,72 +99,84 @@ jobs:
 
             // 親issueを再帰的に更新する関数
             async function updateParentProgress(issueNumber) {
-              // GraphQL で親issueの番号を取得
-              const parentResult = await github.graphql(`
-                query($owner: String!, $repo: String!, $number: Int!) {
-                  repository(owner: $owner, name: $repo) {
-                    issue(number: $number) {
-                      parent {
-                        number
-                      }
-                    }
+              // REST API で対象issueのタイムラインイベントから親issueを特定
+              // （Sub-issues progressは使わず、親子関係のみ取得）
+              const timelineEvents = await github.paginate(
+                github.rest.issues.listEventsForTimeline,
+                {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                  per_page: 100
+                }
+              );
+
+              // タイムラインから "added_to_parent" イベントで親issueを特定
+              let parentNumber = null;
+              for (const event of timelineEvents) {
+                if (event.event === 'added_to_parent' && event.parent) {
+                  parentNumber = event.parent.number;
+                } else if (event.event === 'removed_from_parent' && event.parent) {
+                  // 親から外された場合はリセット
+                  if (event.parent.number === parentNumber) {
+                    parentNumber = null;
                   }
                 }
-              `, {
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                number: issueNumber
-              });
+              }
 
-              const parentNumber = parentResult.repository.issue.parent?.number;
               if (!parentNumber) {
                 console.log(`Issue #${issueNumber} には親issueがありません。再帰終了。`);
                 return;
               }
               console.log(`親issue: #${parentNumber}`);
 
-              // GraphQL で親issueのサブissue一覧を取得
-              const subIssuesResult = await github.graphql(`
-                query($owner: String!, $repo: String!, $number: Int!) {
-                  repository(owner: $owner, name: $repo) {
-                    issue(number: $number) {
-                      subIssues(first: 100) {
-                        nodes {
-                          number
-                          body
-                        }
-                      }
-                    }
-                  }
+              // 親issueのタイムラインから子issue一覧を取得
+              const parentTimeline = await github.paginate(
+                github.rest.issues.listEventsForTimeline,
+                {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: parentNumber,
+                  per_page: 100
                 }
-              `, {
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                number: parentNumber
-              });
+              );
 
-              const subIssueNodes = subIssuesResult.repository.issue.subIssues.nodes;
+              // "added_to_sub_issue" イベントから子issue番号を収集
+              const childNumbers = new Set();
+              for (const event of parentTimeline) {
+                if (event.event === 'added_to_sub_issue' && event.sub_issue) {
+                  childNumbers.add(event.sub_issue.number);
+                } else if (event.event === 'removed_from_sub_issue' && event.sub_issue) {
+                  childNumbers.delete(event.sub_issue.number);
+                }
+              }
 
-              // 各サブissueの進捗率を収集
+              // 各子issueのbodyをREST APIで個別取得し、進捗率を収集
               const rates = [];
-              for (const subIssue of subIssueNodes) {
-                // 現在編集中のissueの場合、イベントペイロードの最新bodyを使用
-                const subIssueBody = (subIssue.number === issue.number)
-                  ? currentBody
-                  : subIssue.body;
-                const rate = getProgressRate(subIssueBody);
+              for (const childNumber of childNumbers) {
+                let childBody;
+                if (childNumber === issue.number) {
+                  // 現在編集中のissueの場合、イベントペイロードの最新bodyを使用
+                  childBody = currentBody;
+                } else {
+                  const childIssue = await github.rest.issues.get({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: childNumber
+                  });
+                  childBody = childIssue.data.body || '';
+                }
+                const rate = getProgressRate(childBody);
                 if (rate !== null) {
                   rates.push(rate);
-                  console.log(`  サブissue #${subIssue.number}: 進捗率 ${rate}%`);
+                  console.log(`  子issue #${childNumber}: 進捗率 ${rate}%`);
                 } else {
-                  // 進捗率が未設定の場合は0とみなす
-                  rates.push(0);
-                  console.log(`  サブissue #${subIssue.number}: 進捗率 未設定(0とみなす)`);
+                  console.log(`  子issue #${childNumber}: 進捗率 未設定(計算から除外)`);
                 }
               }
 
               if (rates.length === 0) {
-                console.log('サブissueが見つかりません。スキップします。');
+                console.log('進捗率が設定された子issueが見つかりません。スキップします。');
                 return;
               }
 
