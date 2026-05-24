@@ -2,7 +2,7 @@ name: 進捗率制御
 
 on:
   issues:
-    types: [opened, edited]
+    types: [opened, edited, labeled, unlabeled, closed, reopened]
 
 permissions:
   issues: write
@@ -42,7 +42,7 @@ jobs:
 
   update-parent-progress:
     # issue編集時に親の進捗率[%]を再計算
-    if: github.event.action == 'edited'
+    if: github.event.action != 'opened'
     runs-on: ubuntu-latest
     steps:
       - name: 親の進捗率を再計算
@@ -74,23 +74,24 @@ jobs:
             const currentBody = issue.body || '';
             const changes = context.payload.changes;
 
-            // bodyの変更がない場合はスキップ
-            if (!changes || !changes.body) {
-              console.log('bodyの変更なし。スキップします。');
-              return;
-            }
-
-            const oldRate = getProgressRate(changes.body.from);
             const newRate = getProgressRate(currentBody);
 
-            // 両方とも数値で同じ値の場合のみスキップ（null同士の場合はスキップしない）
-            if (oldRate !== null && newRate !== null && oldRate === newRate) {
-              console.log('進捗率[%]の変更なし。スキップします。');
-              return;
+            // bodyの変更がある場合、進捗率が変わっていなければスキップ
+            if (changes && changes.body) {
+              const oldRate = getProgressRate(changes.body.from);
+              if (oldRate !== null && newRate !== null && oldRate === newRate) {
+                console.log('進捗率[%]の変更なし。スキップします。');
+                return;
+              }
+              console.log(`Issue #${issue.number} の進捗率: ${oldRate} → ${newRate}`);
+            } else {
+              // bodyの変更がなくても進捗率があれば親の再計算を試みる
+              if (newRate === null) {
+                console.log('進捗率[%]が設定されていません。スキップします。');
+                return;
+              }
+              console.log(`Issue #${issue.number} の進捗率: ${newRate}（body以外の変更による再計算）`);
             }
-
-            // 両方nullの場合でも親の再計算を試みる（初回設定や形式不一致に対応）
-            console.log(`Issue #${issue.number} の進捗率: ${oldRate} → ${newRate}`);
 
             // 親issueを再帰的に更新する関数
             async function updateParentProgress(issueNumber) {
@@ -143,7 +144,11 @@ jobs:
               // 各サブissueの進捗率を収集
               const rates = [];
               for (const subIssue of subIssueNodes) {
-                const rate = getProgressRate(subIssue.body);
+                // 現在編集中のissueの場合、イベントペイロードの最新bodyを使用
+                const subIssueBody = (subIssue.number === issue.number)
+                  ? currentBody
+                  : subIssue.body;
+                const rate = getProgressRate(subIssueBody);
                 if (rate !== null) {
                   rates.push(rate);
                   console.log(`  サブissue #${subIssue.number}: 進捗率 ${rate}%`);
