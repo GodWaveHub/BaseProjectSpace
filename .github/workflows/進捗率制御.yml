@@ -1,224 +1,52 @@
 name: 進捗率制御
 
 on:
-  projects_v2_item:
-    types: [created, edited]
+  schedule:
+    - cron: '*/30 * * * *'   # 30分ごとに自動実行
+  workflow_dispatch:
+    inputs:
+      project_node_id:
+        description: 'GitHub Project の Node ID（省略時はリポジトリ変数 PROJECT_NODE_ID を使用）'
+        required: false
+        default: ''
 
 permissions:
-  issues: write
+  issues: read
   contents: read
 
 jobs:
-  initialize-progress:
-    # プロジェクトアイテム作成時に進捗率[%]を0で初期化
-    if: github.event.action == 'created'
+  recalculate-progress:
+    name: 全アイテムの進捗率[%]を再計算
     runs-on: ubuntu-latest
     steps:
-      - name: 進捗率を0で初期化
+      - name: 進捗率を再帰的に再計算
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.PAT_TOKEN }}
           script: |
-            const itemNodeId = context.payload.projects_v2_item.node_id;
-            const projectNodeId = context.payload.projects_v2_item.project_node_id;
+            // -------------------------------------------------------
+            // プロジェクト Node ID の決定
+            //   1. workflow_dispatch の入力値
+            //   2. リポジトリ変数 PROJECT_NODE_ID
+            // -------------------------------------------------------
+            const projectNodeId =
+              '${{ inputs.project_node_id }}'.trim() ||
+              '${{ vars.PROJECT_NODE_ID }}'.trim();
 
-            // アイテムの詳細とプロジェクトのフィールド情報を取得
-            const itemData = await github.graphql(`
-              query($itemId: ID!) {
-                node(id: $itemId) {
-                  ... on ProjectV2Item {
-                    content {
-                      ... on Issue {
-                        number
-                        title
-                      }
-                    }
-                    fieldValues(first: 20) {
-                      nodes {
-                        ... on ProjectV2ItemFieldNumberValue {
-                          number
-                          field {
-                            ... on ProjectV2FieldCommon {
-                              name
-                              id
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            `, { itemId: itemNodeId });
-
-            const item = itemData.node;
-            if (!item || !item.content) {
-              console.log('Issue以外のアイテムのため、スキップします。');
+            if (!projectNodeId) {
+              core.setFailed(
+                'プロジェクトの Node ID が未設定です。\n' +
+                'workflow_dispatch の入力値、またはリポジトリ変数 PROJECT_NODE_ID を設定してください。'
+              );
               return;
             }
 
-            // 「進捗率[%]」フィールドの現在値を確認
-            let progressFieldId = null;
-            let currentProgress = null;
-            for (const fv of item.fieldValues.nodes) {
-              if (fv.field && fv.field.name === '進捗率[%]') {
-                progressFieldId = fv.field.id;
-                currentProgress = fv.number;
-                break;
-              }
-            }
+            console.log(`対象プロジェクト: ${projectNodeId}`);
 
-            if (currentProgress !== null && currentProgress !== undefined) {
-              console.log(`進捗率[%] は既に ${currentProgress}% に設定されています。スキップします。`);
-              return;
-            }
-
-            // フィールドIDがまだ取れていない場合はプロジェクトから検索
-            if (!progressFieldId) {
-              const projectData = await github.graphql(`
-                query($projectId: ID!) {
-                  node(id: $projectId) {
-                    ... on ProjectV2 {
-                      fields(first: 50) {
-                        nodes {
-                          ... on ProjectV2Field {
-                            id
-                            name
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              `, { projectId: projectNodeId });
-
-              for (const field of projectData.node.fields.nodes) {
-                if (field.name === '進捗率[%]') {
-                  progressFieldId = field.id;
-                  break;
-                }
-              }
-            }
-
-            if (!progressFieldId) {
-              console.log('「進捗率[%]」フィールドがプロジェクトに見つかりません。スキップします。');
-              return;
-            }
-
-            // 進捗率[%]を0で初期化
-            await github.graphql(`
-              mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: Float!) {
-                updateProjectV2ItemFieldValue(input: {
-                  projectId: $projectId
-                  itemId: $itemId
-                  fieldId: $fieldId
-                  value: { number: $value }
-                }) {
-                  projectV2Item {
-                    id
-                  }
-                }
-              }
-            `, {
-              projectId: projectNodeId,
-              itemId: itemNodeId,
-              fieldId: progressFieldId,
-              value: 0
-            });
-
-            console.log(`Issue #${item.content.number} の進捗率[%]を0で初期化しました`);
-
-  update-parent-progress:
-    # 進捗率[%]フィールド編集時に親の進捗率[%]を再計算
-    if: github.event.action == 'edited'
-    runs-on: ubuntu-latest
-    steps:
-      - name: 親の進捗率を再計算
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.PAT_TOKEN }}
-          script: |
-            const payload = context.payload;
-            const changes = payload.changes;
-
-            // 変更されたフィールドが「進捗率[%]」か確認
-            // field_value変更の場合 changes.field_value.field_node_id で特定
-            if (!changes || !changes.field_value) {
-              console.log('フィールド値の変更ではありません。スキップします。');
-              return;
-            }
-
-            const itemNodeId = payload.projects_v2_item.node_id;
-            const projectNodeId = payload.projects_v2_item.project_node_id;
-
-            // 変更されたアイテムの詳細取得
-            const itemData = await github.graphql(`
-              query($itemId: ID!) {
-                node(id: $itemId) {
-                  ... on ProjectV2Item {
-                    content {
-                      ... on Issue {
-                        number
-                        title
-                      }
-                    }
-                    fieldValues(first: 20) {
-                      nodes {
-                        ... on ProjectV2ItemFieldNumberValue {
-                          number
-                          field {
-                            ... on ProjectV2FieldCommon {
-                              name
-                              id
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            `, { itemId: itemNodeId });
-
-            const item = itemData.node;
-            if (!item || !item.content) {
-              console.log('Issue以外のアイテムのため、スキップします。');
-              return;
-            }
-
-            // 変更フィールドが「進捗率[%]」か確認
-            let progressFieldId = null;
-            let currentProgress = null;
-            for (const fv of item.fieldValues.nodes) {
-              if (fv.field && fv.field.name === '進捗率[%]') {
-                progressFieldId = fv.field.id;
-                currentProgress = fv.number;
-                break;
-              }
-            }
-
-            // 変更対象フィールドが「進捗率[%]」でない場合はスキップ
-            if (!progressFieldId || changes.field_value.field_node_id !== progressFieldId) {
-              // field_node_id が一致しない場合もフィールド名で判定
-              // (変更フィールド情報はchanges.field_value.field_node_idのみ)
-              // 念のためフィールドIDが取れている場合だけ進める
-              if (progressFieldId && changes.field_value.field_node_id !== progressFieldId) {
-                console.log('進捗率[%]以外のフィールド変更です。スキップします。');
-                return;
-              }
-              if (!progressFieldId) {
-                console.log('「進捗率[%]」フィールドが見つかりません。スキップします。');
-                return;
-              }
-            }
-
-            const issueNumber = item.content.number;
-            console.log(`Issue #${issueNumber} の進捗率[%]が ${currentProgress}% に変更されました`);
-
-            // GraphQL: issue番号からプロジェクト内の親子関係を取得しながら進捗を再帰更新
-            // GitHub Sub-issues API (REST timeline) で親issueを特定する
+            // -------------------------------------------------------
+            // ヘルパー: プロジェクト内アイテムを Issue 番号で検索
+            // -------------------------------------------------------
             async function getProgressFromItem(targetIssueNumber, pNodeId) {
-              // プロジェクト内の全アイテムを検索してissue番号に一致するものを取得
               let cursor = null;
               let found = null;
               do {
@@ -250,15 +78,16 @@ jobs:
                   }
                 `, { projectId: pNodeId, cursor });
 
-                const pageItems = result.node.items.nodes;
-                for (const pi of pageItems) {
+                for (const pi of result.node.items.nodes) {
                   if (pi.content && pi.content.number === targetIssueNumber) {
                     found = pi;
                     break;
                   }
                 }
                 if (found) break;
-                cursor = result.node.items.pageInfo.hasNextPage ? result.node.items.pageInfo.endCursor : null;
+                cursor = result.node.items.pageInfo.hasNextPage
+                  ? result.node.items.pageInfo.endCursor
+                  : null;
               } while (cursor);
 
               if (!found) return { itemId: null, rate: null, fieldId: null };
@@ -275,8 +104,18 @@ jobs:
               return { itemId: found.id, rate, fieldId: fId };
             }
 
-            async function updateParentProgress(targetIssueNumber) {
-              // タイムラインイベントから親issueを特定
+            // -------------------------------------------------------
+            // ヘルパー: 親 Issue の進捗率を子の平均で更新し再帰
+            // -------------------------------------------------------
+            const updatedIssues = new Set(); // 無限ループ防止
+
+            async function updateParentProgress(targetIssueNumber, currentProgress, progressFieldId) {
+              if (updatedIssues.has(targetIssueNumber)) {
+                console.log(`Issue #${targetIssueNumber} は処理済みのためスキップします。`);
+                return;
+              }
+
+              // タイムラインから親 Issue を特定
               const timelineEvents = await github.paginate(
                 github.rest.issues.listEventsForTimeline,
                 {
@@ -297,12 +136,12 @@ jobs:
               }
 
               if (!parentNumber) {
-                console.log(`Issue #${targetIssueNumber} には親issueがありません。再帰終了。`);
+                console.log(`Issue #${targetIssueNumber} には親 Issue がありません。再帰終了。`);
                 return;
               }
-              console.log(`親issue: #${parentNumber}`);
+              console.log(`  親 Issue: #${parentNumber}`);
 
-              // 親issueのタイムラインから子issue一覧を取得
+              // 親のタイムラインから子 Issue 一覧を取得
               const parentTimeline = await github.paginate(
                 github.rest.issues.listEventsForTimeline,
                 {
@@ -322,13 +161,12 @@ jobs:
                 }
               }
 
-              // 各子issueの進捗率[%]をプロジェクトのCustom Fieldから取得
+              // 各子 Issue の進捗率[%] をプロジェクトの Custom Field から取得
               const rates = [];
               let sharedFieldId = progressFieldId;
               for (const childNumber of childNumbers) {
                 let rate;
-                if (childNumber === issueNumber) {
-                  // 現在編集中のissueは最新値を使用
+                if (childNumber === targetIssueNumber) {
                   rate = currentProgress;
                 } else {
                   const result = await getProgressFromItem(childNumber, projectNodeId);
@@ -337,67 +175,126 @@ jobs:
                 }
                 if (rate !== null && rate !== undefined) {
                   rates.push(rate);
-                  console.log(`  子issue #${childNumber}: 進捗率 ${rate}%`);
+                  console.log(`    子 Issue #${childNumber}: 進捗率 ${rate}%`);
                 } else {
-                  console.log(`  子issue #${childNumber}: 進捗率 未設定(計算から除外)`);
+                  console.log(`    子 Issue #${childNumber}: 進捗率 未設定 (計算から除外)`);
                 }
               }
 
               if (rates.length === 0) {
-                console.log('進捗率が設定された子issueが見つかりません。スキップします。');
+                console.log('進捗率が設定された子 Issue が見つかりません。スキップします。');
                 return;
               }
 
               // 平均値を計算（小数点以下は四捨五入）
               const average = Math.round(rates.reduce((a, b) => a + b, 0) / rates.length);
-              console.log(`親issue #${parentNumber} の新しい進捗率: ${average}%`);
+              console.log(`  親 Issue #${parentNumber} の新しい進捗率: ${average}%`);
 
-              // 親issueのプロジェクトアイテムを取得
+              // 親 Issue のプロジェクトアイテムを取得
               const parentResult = await getProgressFromItem(parentNumber, projectNodeId);
-
               if (!parentResult.itemId) {
-                console.log(`親issue #${parentNumber} がプロジェクトに見つかりません。スキップします。`);
+                console.log(`親 Issue #${parentNumber} がプロジェクトに見つかりません。スキップします。`);
                 return;
               }
 
-              const currentParentRate = parentResult.rate;
-              const parentItemId = parentResult.itemId;
               const parentFieldId = parentResult.fieldId || sharedFieldId;
-
-              if (currentParentRate === average) {
-                console.log(`親issue #${parentNumber} の進捗率は既に ${average}% です。更新不要。`);
-                return;
-              }
-
               if (!parentFieldId) {
-                console.log('「進捗率[%]」フィールドIDが特定できません。スキップします。');
+                console.log('「進捗率[%]」フィールド ID が特定できません。スキップします。');
                 return;
               }
 
-              // 親issueのプロジェクトCustom Fieldを更新
-              await github.graphql(`
-                mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: Float!) {
-                  updateProjectV2ItemFieldValue(input: {
-                    projectId: $projectId
-                    itemId: $itemId
-                    fieldId: $fieldId
-                    value: { number: $value }
-                  }) {
-                    projectV2Item { id }
+              if (parentResult.rate === average) {
+                console.log(`  親 Issue #${parentNumber} の進捗率は既に ${average}% です。更新不要。`);
+              } else {
+                // 親 Issue のプロジェクト Custom Field を更新
+                await github.graphql(`
+                  mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: Float!) {
+                    updateProjectV2ItemFieldValue(input: {
+                      projectId: $projectId
+                      itemId: $itemId
+                      fieldId: $fieldId
+                      value: { number: $value }
+                    }) {
+                      projectV2Item { id }
+                    }
                   }
-                }
-              `, {
-                projectId: projectNodeId,
-                itemId: parentItemId,
-                fieldId: parentFieldId,
-                value: average
-              });
-
-              console.log(`親issue #${parentNumber} の進捗率を ${average}% に更新しました`);
+                `, {
+                  projectId: projectNodeId,
+                  itemId: parentResult.itemId,
+                  fieldId: parentFieldId,
+                  value: average
+                });
+                console.log(`  → 親 Issue #${parentNumber} を ${average}% に更新しました`);
+                updatedIssues.add(parentNumber);
+              }
 
               // さらに上位の親を再帰的に更新
-              await updateParentProgress(parentNumber);
+              await updateParentProgress(parentNumber, average, parentFieldId);
             }
 
-            // 親issueの更新を開始
-            await updateParentProgress(issueNumber);
+            // -------------------------------------------------------
+            // プロジェクト内の全アイテムをスキャンして再計算
+            // -------------------------------------------------------
+            let cursor = null;
+            let processedCount = 0;
+
+            do {
+              const result = await github.graphql(`
+                query($projectId: ID!, $cursor: String) {
+                  node(id: $projectId) {
+                    ... on ProjectV2 {
+                      items(first: 50, after: $cursor) {
+                        pageInfo { hasNextPage endCursor }
+                        nodes {
+                          id
+                          content {
+                            ... on Issue { number title }
+                          }
+                          fieldValues(first: 20) {
+                            nodes {
+                              ... on ProjectV2ItemFieldNumberValue {
+                                number
+                                field {
+                                  ... on ProjectV2FieldCommon { name id }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              `, { projectId: projectNodeId, cursor });
+
+              for (const item of result.node.items.nodes) {
+                if (!item.content || item.content.number === undefined) continue;
+
+                const issueNumber = item.content.number;
+                let progressRate = null;
+                let progressFieldId = null;
+
+                for (const fv of item.fieldValues.nodes) {
+                  if (fv.field && fv.field.name === '進捗率[%]') {
+                    progressRate = fv.number ?? null;
+                    progressFieldId = fv.field.id;
+                    break;
+                  }
+                }
+
+                if (progressRate === null) {
+                  console.log(`Issue #${issueNumber} "${item.content.title}": 進捗率 未設定 (スキップ)`);
+                  continue;
+                }
+
+                console.log(`\nIssue #${issueNumber} "${item.content.title}": 進捗率 ${progressRate}% → 親を更新`);
+                await updateParentProgress(issueNumber, progressRate, progressFieldId);
+                processedCount++;
+              }
+
+              cursor = result.node.items.pageInfo.hasNextPage
+                ? result.node.items.pageInfo.endCursor
+                : null;
+            } while (cursor);
+
+            console.log(`\n完了: ${processedCount} 件の Issue を処理しました。`);
