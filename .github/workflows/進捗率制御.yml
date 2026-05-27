@@ -10,9 +10,16 @@ on:
         required: false
         default: ''
 
+# -------------------------------------------------------
+# 【重要】GitHub Projects V2 の GraphQL API を使用するため
+#   - GITHUB_TOKEN では Organization レベルのプロジェクトにアクセスできない場合があります。
+#   - その場合は `project` スコープを持つ PAT を Secrets に PAT_TOKEN として登録してください。
+#     Settings > Secrets and variables > Actions > New repository secret
+# -------------------------------------------------------
 permissions:
   issues: read
   contents: read
+  repository-projects: write  # リポジトリレベルの Projects アクセス
 
 jobs:
   recalculate-progress:
@@ -22,6 +29,8 @@ jobs:
       - name: 進捗率を再帰的に再計算
         uses: actions/github-script@v7
         with:
+          # PAT_TOKEN（project スコープ必須）が設定されていればそちらを優先
+          # 未設定の場合は GITHUB_TOKEN にフォールバック（Organization プロジェクトは要PAT）
           github-token: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
             // -------------------------------------------------------
