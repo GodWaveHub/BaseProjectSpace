@@ -22,7 +22,7 @@ jobs:
       - name: 進捗率を再帰的に再計算
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.PAT_TOKEN }}
+          github-token: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
             // -------------------------------------------------------
             // プロジェクト Node ID の決定
