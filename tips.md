@@ -203,7 +203,25 @@ github.com
   - Token: ghp_************************************
   - Token scopes: 'gist', 'read:org', 'repo'
 ```
-
+## projectのid取得時のコマンド
+- ただし、トークンの権限にproject:readの追加が必要
+```powershell
+gh api graphql -f query='query { user(login: "GodWaveHub") { projectsV2(first: 10) { nodes { id title } } } }'
+{
+  "data": {
+    "user": {
+      "projectsV2": {
+        "nodes": [
+          {
+            "id": "PVT_kwHOA-wQNs4BYky6",
+            "title": "test"
+          }
+        ]
+      }
+    }
+  }
+}
+```
 # GitHub Copilot の他知識集
 
 ## 対話型実施時の知識

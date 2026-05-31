@@ -1,3 +1,32 @@
+<#
+.SYNOPSIS
+    GitHubのIssueを階層構造や進捗情報を含めてCSVエクスポートするスクリプト。
+
+.DESCRIPTION
+    本スクリプトは GitHub CLI (gh) を利用してIssue一覧を取得し、親子関係や進捗情報を付与したCSVファイルを出力します。
+
+    【主な仕様】
+    1. GitHub CLIでIssue情報 (number, title, body, state, createdAt, updatedAt) を取得。
+    2. メタデータの抽出
+       - 親子関係: GitHubネイティブのSub-issue、または本文中の <!-- parent: #123 -->
+       - 期間情報: 本文中の <!-- start: yyyy-MM-dd -->, <!-- end: yyyy-MM-dd -->
+       - 実績進捗: 本文中の <!-- progress: 50% -->
+    3. 親子関係を解析し、ツリー構造（Level1_Title, Level2_Title...）を構築。
+    4. 開始日・終了日と現在日から「予定進捗 (PlannedProgress)」を自動計算。
+    5. 結果を指定フォルダにUTF-8エンコーディングのCSV形式で保存。
+
+.PARAMETER Repo
+    対象のリポジトリ (例: owner/repo)。省略した場合はカレントディレクトリの情報を利用。
+
+.PARAMETER OutputDir
+    出力先ディレクトリ。デフォルトは "./issues-export"。
+
+.PARAMETER State
+    取得するIssueの状態 ("open", "closed", "all")。デフォルトは "all"。
+
+.PARAMETER Limit
+    取得する最大件数 (1-1000)。デフォルトは 1000。
+#>
 [CmdletBinding()]
 param(
     [string]$Repo,
