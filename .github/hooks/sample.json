@@ -1,46 +1,97 @@
 {
+	"version": 1,
 	"hooks": {
-		"PreToolUse": [
+		"sessionStart": [
+			{
+				"type": "command",
+				"powershell": "pwsh -NoProfile -File ./SCRIPTS/log-subagent-hook.ps1",
+				"bash": "bash ./SCRIPTS/log-subagent-hook.sh"
+			}
+		],
+		"sessionEnd": [
+			{
+				"type": "command",
+				"powershell": "pwsh -NoProfile -File ./SCRIPTS/log-subagent-hook.ps1",
+				"bash": "bash ./SCRIPTS/log-subagent-hook.sh"
+			}
+		],
+		"userPromptSubmitted": [
+			{
+				"type": "command",
+				"powershell": "pwsh -NoProfile -File ./SCRIPTS/log-subagent-hook.ps1",
+				"bash": "bash ./SCRIPTS/log-subagent-hook.sh"
+			}
+		],
+		"preToolUse": [
 			{
 				"matcher": "Agent",
-				"hooks": [
-					{
-						"type": "command",
-						"command": "pwsh -NoProfile -File ./SCRIPTS/log-subagent-hook.ps1"
-					}
-				]
+				"type": "command",
+				"powershell": "pwsh -NoProfile -File ./SCRIPTS/log-subagent-hook.ps1",
+				"bash": "bash ./SCRIPTS/log-subagent-hook.sh"
 			}
 		],
-		"PostToolUse": [
+		"postToolUse": [
 			{
 				"matcher": "Agent",
-				"hooks": [
-					{
-						"type": "command",
-						"command": "pwsh -NoProfile -File ./SCRIPTS/log-subagent-hook.ps1"
-					}
-				]
+				"type": "command",
+				"powershell": "pwsh -NoProfile -File ./SCRIPTS/log-subagent-hook.ps1",
+				"bash": "bash ./SCRIPTS/log-subagent-hook.sh"
 			}
 		],
-		"SubagentStart": [
+		"postToolUseFailure": [
 			{
-				"hooks": [
-					{
-						"type": "command",
-						"command": "pwsh -NoProfile -File ./SCRIPTS/log-subagent-hook.ps1"
-					}
-				]
+				"type": "command",
+				"powershell": "pwsh -NoProfile -File ./SCRIPTS/log-subagent-hook.ps1",
+				"bash": "bash ./SCRIPTS/log-subagent-hook.sh"
 			}
 		],
-		"SubagentStop": [
-			// サブエージェント終了時に結果サマリーをログ
+		"agentStop": [
 			{
-				"hooks": [
-					{
-						"type": "command",
-						"command": "pwsh -NoProfile -File ./SCRIPTS/log-subagent-hook.ps1"
-					}
-				]
+				"type": "command",
+				"powershell": "pwsh -NoProfile -File ./SCRIPTS/log-subagent-hook.ps1",
+				"bash": "bash ./SCRIPTS/log-subagent-hook.sh"
+			}
+		],
+		"subagentStart": [
+			{
+				"type": "command",
+				"powershell": "pwsh -NoProfile -File ./SCRIPTS/log-subagent-hook.ps1",
+				"bash": "bash ./SCRIPTS/log-subagent-hook.sh"
+			}
+		],
+		"subagentStop": [
+			{
+				"type": "command",
+				"powershell": "pwsh -NoProfile -File ./SCRIPTS/log-subagent-hook.ps1",
+				"bash": "bash ./SCRIPTS/log-subagent-hook.sh"
+			}
+		],
+		"errorOccurred": [
+			{
+				"type": "command",
+				"powershell": "pwsh -NoProfile -File ./SCRIPTS/log-subagent-hook.ps1",
+				"bash": "bash ./SCRIPTS/log-subagent-hook.sh"
+			}
+		],
+		"preCompact": [
+			{
+				"type": "command",
+				"powershell": "pwsh -NoProfile -File ./SCRIPTS/log-subagent-hook.ps1",
+				"bash": "bash ./SCRIPTS/log-subagent-hook.sh"
+			}
+		],
+		"notification": [
+			{
+				"type": "command",
+				"powershell": "pwsh -NoProfile -File ./SCRIPTS/log-subagent-hook.ps1",
+				"bash": "bash ./SCRIPTS/log-subagent-hook.sh"
+			}
+		],
+		"permissionRequest": [
+			{
+				"type": "command",
+				"powershell": "pwsh -NoProfile -File ./SCRIPTS/log-subagent-hook.ps1",
+				"bash": "bash ./SCRIPTS/log-subagent-hook.sh"
 			}
 		]
 	}
